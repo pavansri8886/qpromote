@@ -366,7 +366,12 @@ def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
               f"H={rec['hellinger']:.4f}  TVD={rec['tvd']:.4f}  "
               f"CFP={rec['cfp']:<4} → {rec['decision']}")
 
-        # Halt pipeline on BLOCK
+        # Halt pipeline on first BLOCK in Stage 2+ (after Stage 1 baseline established)
+        # Note: For demo/testing, disable halt by commenting the block below
+        # if rec["decision"] == "BLOCK" and "stage2" in stage_name.lower():
+        #     print(f"\n  ⛔ Pipeline halted at {stage_name}: {rec['notes']}")
+        #     break
+        # Halt pipeline on BLOCK (production mode)
         if rec["decision"] == "BLOCK":
             print(f"\n  ⛔ Pipeline halted at {stage_name}: {rec['notes']}")
             break
