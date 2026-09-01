@@ -1,0 +1,104 @@
+project: "QPromote Thesis Evaluation"
+db_path: "qpromote_evidence.db"
+shots: 4096
+
+stages:
+  # ─── Bell State ────────────────────────────────────────────────────
+  - name: "Bell Stage 1 (Ideal)"
+    backend: aer_simulator
+    circuit: bell
+    thresholds:
+      fidelity: 0.90
+
+  - name: "Bell Stage 2 (Noisy)"
+    backend: FakeManilaV2
+    circuit: bell
+    thresholds:
+      hellinger_fidelity: 0.90
+      tvd: 0.10
+
+  - name: "Bell Stage 3 (Hardware Proxy)"
+    backend: FakeSherbrooke
+    circuit: bell
+    thresholds:
+      fidelity: 0.80
+
+  # ─── GHZ State ─────────────────────────────────────────────────────
+  - name: "GHZ Stage 1 (Ideal)"
+    backend: aer_simulator
+    circuit: ghz
+    thresholds:
+      fidelity: 0.90
+
+  - name: "GHZ Stage 2 (Noisy)"
+    backend: FakeManilaV2
+    circuit: ghz
+    thresholds:
+      hellinger_fidelity: 0.90
+      tvd: 0.10
+
+  - name: "GHZ Stage 3 (Hardware Proxy)"
+    backend: FakeSherbrooke
+    circuit: ghz
+    thresholds:
+      fidelity: 0.80
+
+  # ─── Grover Search ─────────────────────────────────────────────────
+  - name: "Grover Stage 1 (Ideal)"
+    backend: aer_simulator
+    circuit: grover
+    thresholds:
+      fidelity: 0.90
+
+  - name: "Grover Stage 2 (Noisy)"
+    backend: FakeManilaV2
+    circuit: grover
+    thresholds:
+      hellinger_fidelity: 0.90
+      tvd: 0.10
+
+  - name: "Grover Stage 3 (Hardware Proxy)"
+    backend: FakeSherbrooke
+    circuit: grover
+    thresholds:
+      fidelity: 0.80
+
+  # ─── Bernstein-Vazirani ────────────────────────────────────────────
+  - name: "BV Stage 1 (Ideal)"
+    backend: aer_simulator
+    circuit: bv
+    thresholds:
+      fidelity: 0.90
+
+  - name: "BV Stage 2 (Noisy)"
+    backend: FakeManilaV2
+    circuit: bv
+    thresholds:
+      hellinger_fidelity: 0.90
+      tvd: 0.10
+
+  - name: "BV Stage 3 (Hardware Proxy)"
+    backend: FakeSherbrooke
+    circuit: bv
+    thresholds:
+      fidelity: 0.80
+
+  # ─── Quantum Fourier Transform ─────────────────────────────────────
+  - name: "QFT Stage 1 (Ideal)"
+    backend: aer_simulator
+    circuit: qft
+    thresholds:
+      fidelity: 0.90
+
+  - name: "QFT Stage 2 (Noisy)"
+    backend: FakeManilaV2
+    circuit: qft
+    thresholds:
+      hellinger_fidelity: 0.90
+      tvd: 0.10
+
+  - name: "QFT Stage 3 (Hardware Proxy)"
+    backend: FakeSherbrooke
+    circuit: qft
+    thresholds:
+      fidelity: 0.80

@@ -1,0 +1,4 @@
+qiskit==2.5.2
+qiskit-aer
+qiskit-ibm-runtime
+PyYAML
