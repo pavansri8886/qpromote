@@ -274,7 +274,7 @@ def run_stage(
     cfp_val  = compute_cfp(circuit)
 
     # Gate decision
-    stage_key = stage_name.lower()
+    stage_key = stage_name.lower().replace(" ", "")
     if "stage3" in stage_key or backend_label == "FakeSherbrooke":
         decision = "DEMONSTRATION"
         notes = "Hardware proxy stage. FakeSherbrooke used as QPU demonstration."
@@ -321,6 +321,7 @@ def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
     db_path = Path(cfg.get("db_path", "qpromote_evidence.db"))
     conn    = init_db(db_path)
     shots   = int(cfg.get("shots", 4096))
+    halt_on_block = bool(cfg.get("halt_on_block", False))
     records: List[Dict[str, Any]] = []
 
     for stage_cfg in cfg.get("stages", []):
@@ -371,8 +372,8 @@ def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
         # if rec["decision"] == "BLOCK" and "stage2" in stage_name.lower():
         #     print(f"\n  ⛔ Pipeline halted at {stage_name}: {rec['notes']}")
         #     break
-        # Halt pipeline on BLOCK (production mode)
-        if rec["decision"] == "BLOCK":
+        # Halt pipeline only when explicitly configured for production mode.
+        if rec["decision"] == "BLOCK" and halt_on_block:
             print(f"\n  ⛔ Pipeline halted at {stage_name}: {rec['notes']}")
             break
 

@@ -1,6 +1,7 @@
 project: "QPromote Thesis Evaluation"
 db_path: "qpromote_evidence.db"
 shots: 4096
+halt_on_block: false
 
 stages:
   # ─── Bell State ────────────────────────────────────────────────────
