@@ -27,3 +27,4 @@ Thumbs.db
 # Project-specific
 *.log
 .env
+qpromote_report.html

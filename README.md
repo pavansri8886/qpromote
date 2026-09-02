@@ -13,6 +13,10 @@ python -m pip install -r requirements.txt
 python qpromote.py run pipeline.yaml
 ```
 
+The run also creates `qpromote_report.html`, a standalone visual report with
+Hellinger charts and the complete evidence table. In GitHub Actions, download
+the `qpromote-results` artifact to view it locally.
+
 ## Supported Circuits
 
 - Bell state (2 qubits)
