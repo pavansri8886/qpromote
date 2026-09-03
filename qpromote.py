@@ -250,11 +250,13 @@ def write_html_report(records: List[Dict[str, Any]], path: Path) -> None:
     rows = []
     for record in records:
         decision = record["decision"]
+        hellinger = "-" if record["hellinger"] is None else f"{record['hellinger']:.4f}"
+        tvd = "-" if record["tvd"] is None else f"{record['tvd']:.4f}"
         rows.append(
             f"<tr><td>{html.escape(record['circuit_name'].upper())}</td>"
             f"<td>{html.escape(record['stage_name'])}</td>"
             f"<td>{html.escape(record['backend_name'])}</td>"
-            f"<td>{record['hellinger']:.4f}</td><td>{record['tvd']:.4f}</td>"
+            f"<td>{hellinger}</td><td>{tvd}</td>"
             f"<td class='{decision.lower()}'>{html.escape(decision)}</td></tr>"
         )
     document = f"""<!doctype html>
@@ -365,6 +367,36 @@ def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
 
         circuit    = CIRCUIT_REGISTRY[circuit_name]()
         ideal_dist = IDEAL_DISTRIBUTIONS.get(circuit_name)
+        stage_key = stage_name.lower().replace(" ", "")
+
+        if "stage3" in stage_key:
+            prior_stage2 = next(
+                (r for r in records
+                 if r["circuit_name"] == circuit_name
+                 and "stage2" in r["stage_name"].lower().replace(" ", "")),
+                None,
+            )
+            if prior_stage2 and prior_stage2["decision"] == "BLOCK":
+                rec = {
+                    "timestamp": utc_timestamp(),
+                    "circuit_name": circuit_name,
+                    "stage_name": stage_name,
+                    "backend_name": backend_name,
+                    "shots": shots,
+                    "hellinger": None,
+                    "tvd": None,
+                    "fidelity": None,
+                    "gate_count": sum(circuit.count_ops().values()),
+                    "qubit_count": circuit.num_qubits,
+                    "classical_bits": circuit.num_clbits,
+                    "cfp": compute_cfp(circuit),
+                    "decision": "SKIPPED",
+                    "notes": "Stage 2 BLOCK; hardware proxy execution skipped.",
+                }
+                store_evidence(conn, rec)
+                records.append(rec)
+                print(f"  - {stage_name} | {backend_name:<18} | SKIPPED (Stage 2 BLOCK)")
+                continue
 
         # QFT: Stage 2 and Stage 3 compare against Stage 1 output, not a fixed ideal
         if ideal_dist is None and records:

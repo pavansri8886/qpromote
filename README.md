@@ -17,6 +17,10 @@ The run also creates `qpromote_report.html`, a standalone visual report with
 Hellinger charts and the complete evidence table. In GitHub Actions, download
 the `qpromote-results` artifact to view it locally.
 
+Stage 3 uses `FakeSherbrooke` as a hardware proxy. A circuit blocked at Stage 2
+is not executed at Stage 3; the pipeline records that stage as `SKIPPED` so the
+15-stage audit trail remains complete without treating a proxy run as promotion.
+
 ## Supported Circuits
 
 - Bell state (2 qubits)
