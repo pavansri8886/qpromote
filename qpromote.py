@@ -265,7 +265,7 @@ def write_html_report(records: List[Dict[str, Any]], path: Path) -> None:
 body{{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17212b;background:#f4f6f8}}
 section{{background:white;border:1px solid #d8e0e7;border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}}
 table{{width:100%;border-collapse:collapse}}th,td{{padding:.6rem;border-bottom:1px solid #e3e8ed;text-align:left}}th{{background:#eaf0f4}}
-.pass{{color:#16803c;font-weight:700}}.block{{color:#c33b30;font-weight:700}}.demonstration{{color:#1769aa;font-weight:700}}
+.pass{{color:#16803c;font-weight:700}}.block{{color:#c33b30;font-weight:700}}.demonstration{{color:#1769aa;font-weight:700}}.skipped{{color:#7a5b00;font-weight:700}}
 </style></head><body><section><h1>QPromote v{VERSION} results</h1>
 <p>{len(records)} stage records from the local simulator pipeline.</p></section>
 <section><h2>Evidence table</h2><table><thead><tr><th>Circuit</th><th>Stage</th><th>Backend</th><th>Hellinger</th><th>TVD</th><th>Decision</th></tr></thead>
