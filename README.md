@@ -1,4 +1,4 @@
-# QPromote v1.1.0
+# QPromote
 
 A declarative progressive delivery pipeline for quantum circuit promotion from 
 ideal simulation to noisy simulation to hardware execution.
