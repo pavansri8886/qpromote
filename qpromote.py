@@ -672,9 +672,15 @@ def generate_reports(
         [row[0] for row in repeated_summary], [float(row[2]) for row in repeated_summary], [float(row[3]) for row in repeated_summary],
     )
     _svg_bar_chart(output_dir / "repeated_pass_rate.svg", "Repeated Stage 2 pass rate", [row[0] for row in repeated_summary], [float(row[5]) for row in repeated_summary])
-    pipeline_circuits = [row["circuit_name"] for row in pipeline_rows if row["stage_type"] == "noisy"]
-    pipeline_h = [float(row["hellinger"]) for row in pipeline_rows if row["stage_type"] == "noisy"]
-    pipeline_tvd = [float(row["tvd"]) for row in pipeline_rows if row["stage_type"] == "noisy"]
+    measured_noisy_rows = [
+        row for row in pipeline_rows
+        if row["stage_type"] == "noisy"
+        and row["hellinger"] is not None
+        and row["tvd"] is not None
+    ]
+    pipeline_circuits = [row["circuit_name"] for row in measured_noisy_rows]
+    pipeline_h = [float(row["hellinger"]) for row in measured_noisy_rows]
+    pipeline_tvd = [float(row["tvd"]) for row in measured_noisy_rows]
     _svg_bar_chart(output_dir / "pipeline_stage2_hellinger.svg", "Single-run Stage 2 Hellinger", pipeline_circuits, pipeline_h)
     _svg_bar_chart(output_dir / "pipeline_stage2_tvd.svg", "Single-run Stage 2 TVD", pipeline_circuits, pipeline_tvd)
     _svg_bar_chart(

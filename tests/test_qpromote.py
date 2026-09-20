@@ -227,6 +227,30 @@ class QPromoteCorrectnessTests(unittest.TestCase):
             self.assertTrue((output / "summary.md").exists())
             self.assertNotIn("unselected", (output / "summary.md").read_text(encoding="utf-8"))
 
+            skipped_record = dict(record)
+            skipped_record.update({
+                "run_id": "partial", "stage_name": "stage2_bell", "shots": 0,
+                "requested_shots": 4096, "executed_shots": 0,
+                "hellinger": None, "tvd": None, "distribution_similarity": None,
+                "raw_counts": {}, "decision": "SKIPPED",
+            })
+            all_skipped_record = dict(skipped_record)
+            all_skipped_record["run_id"] = "all_skipped"
+            skipped_conn = sqlite3.connect(db)
+            qpromote.store_evidence(skipped_conn, skipped_record)
+            qpromote.store_evidence(skipped_conn, all_skipped_record)
+            skipped_conn.close()
+            partial_output = Path(directory) / "partial_report"
+            qpromote.generate_reports(db, partial_output, "partial", "repeated", "scanrun")
+            partial_summary = (partial_output / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("SKIPPED", partial_summary)
+            self.assertIn("missing", partial_summary)
+            self.assertTrue((partial_output / "pipeline_stage2_hellinger.svg").exists())
+            all_skipped_output = Path(directory) / "all_skipped_report"
+            qpromote.generate_reports(db, all_skipped_output, "all_skipped", "repeated", "scanrun")
+            self.assertTrue((all_skipped_output / "pipeline_stage2_hellinger.svg").exists())
+            self.assertTrue((all_skipped_output / "pipeline_stage2_tvd.svg").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
