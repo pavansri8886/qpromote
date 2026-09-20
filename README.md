@@ -1,4 +1,4 @@
-# QPromote v1.3.0
+# QPromote v1.4.0
 
 A declarative progressive delivery pipeline for quantum circuit promotion from 
 ideal simulation to noisy simulation to hardware execution.
@@ -28,6 +28,27 @@ python qpromote.py threshold-scan pipeline.yaml --thresholds 0.80,0.85,0.90,0.92
 Each threshold scan samples a circuit once per repetition and applies every
 candidate threshold to the same measured distribution. Use `--runs` to set
 the number of repetitions (20 by default).
+
+Generate reports from explicit, selected runs without combining historical data:
+
+```bash
+python qpromote.py report --db evidence_20260920_final.db \
+	--output reports_20260920_final \
+	--pipeline-run PIPELINE_RUN_ID \
+	--repeated-run REPEATED_RUN_ID \
+	--threshold-run THRESHOLD_RUN_ID
+```
+
+The report directory contains `report.html`, `summary.md`, CSV tables, SVG
+charts, and `provenance.json`. Threshold scans store one sampled execution per
+circuit/repetition in `scan_executions`; the five threshold decisions reference
+that execution and do not multiply actual shot consumption.
+
+Run the regression suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 The run also creates `qpromote_report.html`, a standalone visual report with
 Hellinger charts and the complete evidence table. In GitHub Actions, download
@@ -88,6 +109,27 @@ experiments are stored in the separate `threshold_scan` table.
 CFP counts quantum operations and measurements separately: two CFP per quantum
 operation and two CFP per measurement. For example, Bell has two quantum gates
 and two measurements, so its CFP is 8.
+
+Actual scan resource use can be queried without threshold-row duplication:
+
+```bash
+sqlite3 evidence_20260920_final.db "SELECT COUNT(*), SUM(executed_shots) FROM scan_executions WHERE run_id='THRESHOLD_RUN_ID';"
+```
+
+The final local verification used `pipeline_final2.yaml` and wrote to the new
+database `evidence_20260920_current2.db` without overwriting earlier databases:
+
+```bash
+python qpromote.py run pipeline_final2.yaml
+python qpromote.py repeated-run pipeline_final2.yaml --runs 20
+python qpromote.py threshold-scan pipeline_final2.yaml --runs 20 --thresholds 0.80,0.85,0.90,0.925,0.95
+python qpromote.py report --db evidence_20260920_current2.db \
+	--output reports_20260920_current2 \
+	--pipeline-run 7b176f65 --repeated-run 2199b078 --threshold-run 7202f6c9
+```
+
+The selected report artifacts are in `reports_20260920_current2/` and include
+`summary.md`, `report.html`, CSV tables, SVG charts, and `provenance.json`.
 
 ```
 sqlite3 qpromote_evidence.db "SELECT circuit_name, stage_name, hellinger, tvd, decision FROM evidence;"

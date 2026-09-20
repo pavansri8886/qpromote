@@ -19,14 +19,35 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
-      - name: Run QPromote pipeline
-        run: python qpromote.py run pipeline.yaml
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Run isolated experiments and reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/artifacts/$GITHUB_RUN_ID"
+          mkdir -p "$OUT"
+          cp pipeline.yaml "$OUT/pipeline.yaml"
+          sed -i 's#^db_path:.*#db_path: evidence.db#; s#^report_path:.*#report_path: pipeline_report.html#' "$OUT/pipeline.yaml"
+          (
+            cd "$OUT"
+            python "$GITHUB_WORKSPACE/qpromote.py" run pipeline.yaml | tee pipeline.log
+            python "$GITHUB_WORKSPACE/qpromote.py" repeated-run pipeline.yaml --runs 20 | tee repeated.log
+            python "$GITHUB_WORKSPACE/qpromote.py" threshold-scan pipeline.yaml --runs 20 --thresholds 0.80,0.85,0.90,0.925,0.95 | tee threshold.log
+          )
+          PIPELINE_RUN_ID=$(python -c "import sqlite3; c=sqlite3.connect('$OUT/evidence.db'); print(c.execute(\"SELECT run_id FROM evidence GROUP BY run_id HAVING COUNT(*)=15 ORDER BY MAX(id) DESC LIMIT 1\").fetchone()[0])")
+          REPEATED_RUN_ID=$(sed -n 's/.*Repeated Stage 2 run \([a-f0-9]*\).*/\1/p' "$OUT/repeated.log" | tail -1)
+          THRESHOLD_RUN_ID=$(sed -n 's/.*Threshold scan \([a-f0-9]*\).*/\1/p' "$OUT/threshold.log" | tail -1)
+          python "$GITHUB_WORKSPACE/qpromote.py" report \
+            --db "$OUT/evidence.db" \
+            --output "$OUT/reports" \
+            --pipeline-run "$PIPELINE_RUN_ID" \
+            --repeated-run "$REPEATED_RUN_ID" \
+            --threshold-run "$THRESHOLD_RUN_ID" | tee "$OUT/report.log"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qpromote-results
-          path: |
-            qpromote_report.html
-            qpromote_evidence.db
-          if-no-files-found: warn
+          path: artifacts/${{ github.run_id }}
+          if-no-files-found: error
