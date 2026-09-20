@@ -43,7 +43,8 @@ jobs:
             --output "$OUT/reports" \
             --pipeline-run "$PIPELINE_RUN_ID" \
             --repeated-run "$REPEATED_RUN_ID" \
-            --threshold-run "$THRESHOLD_RUN_ID" | tee "$OUT/report.log"
+            --threshold-run "$THRESHOLD_RUN_ID" \
+            --summary-file "$OUT/summary.md" | tee "$OUT/report.log"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

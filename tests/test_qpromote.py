@@ -86,6 +86,35 @@ class QPromoteCorrectnessTests(unittest.TestCase):
         config["seed"] = True
         with self.assertRaises(ValueError):
             qpromote.validate_config(config)
+
+    def test_legacy_shot_migration_is_conservative(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "legacy.db"
+            conn = sqlite3.connect(db)
+            conn.executescript("""
+                CREATE TABLE evidence (
+                    id INTEGER PRIMARY KEY, timestamp TEXT, circuit_name TEXT,
+                    stage_name TEXT, backend_name TEXT, shots INTEGER,
+                    decision TEXT
+                );
+                CREATE TABLE threshold_scan (
+                    id INTEGER PRIMARY KEY, run_id TEXT, timestamp TEXT,
+                    circuit_name TEXT, threshold REAL, shots INTEGER,
+                    hellinger REAL, tvd REAL, decision TEXT,
+                    aer_version TEXT, runtime_version TEXT
+                );
+                INSERT INTO evidence VALUES (1, 't', 'bell', 'stage2', 'FakeManilaV2', 4096, 'PASS');
+                INSERT INTO evidence VALUES (2, 't', 'ghz', 'stage3', 'FakeSherbrooke', 4096, 'SKIPPED');
+                INSERT INTO threshold_scan VALUES (1, 'legacy', 't', 'grover', 0.9, 4096, 0.89, 0.11, 'BLOCK', 'unknown', 'unknown');
+            """)
+            conn.commit()
+            conn.close()
+            migrated = qpromote.init_db(db)
+            evidence = migrated.execute("SELECT requested_shots, executed_shots FROM evidence ORDER BY id").fetchall()
+            threshold = migrated.execute("SELECT requested_shots, executed_shots, execution_id FROM threshold_scan").fetchone()
+            migrated.close()
+            self.assertEqual(evidence, [(4096, 4096), (4096, 0)])
+            self.assertEqual(tuple(threshold), (4096, qpromote.UNKNOWN_SHOTS, None))
         with self.assertRaises(ValueError):
             qpromote.validate_config({
                 "shots": 4096,

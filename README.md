@@ -131,6 +131,11 @@ python qpromote.py report --db evidence_20260920_current2.db \
 The selected report artifacts are in `reports_20260920_current2/` and include
 `summary.md`, `report.html`, CSV tables, SVG charts, and `provenance.json`.
 
+When an older SQLite database is opened, unambiguous historical stage rows are
+backfilled from their original `shots` value. Historical threshold decisions
+without an execution identity receive `executed_shots=-1` (unknown) and are
+never included in actual scan-resource totals.
+
 ```
 sqlite3 qpromote_evidence.db "SELECT circuit_name, stage_name, hellinger, tvd, decision FROM evidence;"
 ```

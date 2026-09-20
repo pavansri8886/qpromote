@@ -36,6 +36,7 @@ from qiskit_ibm_runtime.fake_provider import FakeManilaV2, FakeSherbrooke
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 VERSION = "1.4.0"
+UNKNOWN_SHOTS = -1
 SUPPORTED_BACKENDS = {
     "ideal": "aer_simulator",
     "noisy": "fakemanilav2",
@@ -154,7 +155,7 @@ def source_provenance() -> Dict[str, Any]:
     repo_dir = source_path.parent
     try:
         dirty = bool(subprocess.run(
-            ["git", "status", "--porcelain", "--", str(source_path)],
+            ["git", "status", "--porcelain"],
             cwd=repo_dir, check=True, capture_output=True, text=True,
         ).stdout.strip())
     except (OSError, subprocess.CalledProcessError):
@@ -425,6 +426,23 @@ def init_db(path: Path) -> sqlite3.Connection:
     for column, definition in threshold_migrations.items():
         if column not in threshold_columns:
             conn.execute(f"ALTER TABLE threshold_scan ADD COLUMN {column} {definition}")
+    # Historical evidence predates requested/executed shot accounting. For ordinary
+    # stage rows, the old shots field is an unambiguous execution count except for
+    # SKIPPED rows. Threshold decisions have no execution identity, so their actual
+    # consumption remains explicitly unknown rather than being counted repeatedly.
+    conn.execute("""
+        UPDATE evidence
+        SET requested_shots = shots,
+            executed_shots = CASE WHEN decision = 'SKIPPED' THEN 0 ELSE shots END
+        WHERE shots > 0 AND requested_shots = 0 AND executed_shots = 0
+    """)
+    conn.execute("""
+        UPDATE threshold_scan
+        SET requested_shots = shots,
+            executed_shots = ?
+        WHERE shots > 0 AND requested_shots = 0 AND executed_shots = 0
+          AND execution_id IS NULL
+    """, (UNKNOWN_SHOTS,))
     conn.commit()
     return conn
 
@@ -564,12 +582,38 @@ def _svg_bar_chart(path: Path, title: str, labels: List[str], values: List[float
     path.write_text(svg, encoding="utf-8")
 
 
+def _svg_error_bar_chart(path: Path, title: str, labels: List[str], values: List[float], errors: List[float]) -> None:
+    width, height = 900, 420
+    margin = 60
+    plot_width = width - 2 * margin
+    bar_width = plot_width / max(len(values), 1) * 0.68
+    scale = (height - 2 * margin) / 1.0
+    bars = []
+    for index, (label, value, error) in enumerate(zip(labels, values, errors)):
+        x = margin + index * plot_width / max(len(values), 1) + bar_width * 0.24
+        y = height - margin - value * scale
+        top = height - margin - min(1.0, value + error) * scale
+        bottom = height - margin - max(0.0, value - error) * scale
+        center = x + bar_width / 2
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{value * scale:.1f}" fill="#1769aa"/>'
+            f'<line x1="{center:.1f}" y1="{top:.1f}" x2="{center:.1f}" y2="{bottom:.1f}" stroke="#c33b30" stroke-width="3"/>'
+            f'<line x1="{center-8:.1f}" y1="{top:.1f}" x2="{center+8:.1f}" y2="{top:.1f}" stroke="#c33b30" stroke-width="3"/>'
+            f'<line x1="{center-8:.1f}" y1="{bottom:.1f}" x2="{center+8:.1f}" y2="{bottom:.1f}" stroke="#c33b30" stroke-width="3"/>'
+            f'<text x="{center:.1f}" y="{height - 25}" text-anchor="middle" font-size="13">{html.escape(label)}</text>'
+        )
+    path.write_text(f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
+<rect width="100%" height="100%" fill="white"/><text x="{width/2}" y="28" text-anchor="middle" font-size="18" font-weight="bold">{html.escape(title)}</text>
+<line x1="{margin}" y1="{height-margin}" x2="{width-margin}" y2="{height-margin}" stroke="#333"/>{''.join(bars)}</svg>''', encoding="utf-8")
+
+
 def generate_reports(
     db_path: Path,
     output_dir: Path,
     pipeline_run: str,
     repeated_run: str,
     threshold_run: str,
+    summary_path: Path | None = None,
 ) -> Dict[str, Any]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -623,7 +667,16 @@ def generate_reports(
             threshold_summary.append((circuit, threshold, len(subset), passes, f"{passes/len(subset):.4f}"))
     _write_csv(output_dir / "threshold_summary.csv", ["circuit_name", "threshold", "sample_size", "pass_count", "pass_rate"], threshold_summary)
     _svg_bar_chart(output_dir / "repeated_mean_hellinger.svg", "Repeated Stage 2 mean Hellinger", [row[0] for row in repeated_summary], [float(row[2]) for row in repeated_summary])
+    _svg_error_bar_chart(
+        output_dir / "repeated_mean_hellinger_sd.svg", "Repeated Stage 2 mean Hellinger +/- sample SD",
+        [row[0] for row in repeated_summary], [float(row[2]) for row in repeated_summary], [float(row[3]) for row in repeated_summary],
+    )
     _svg_bar_chart(output_dir / "repeated_pass_rate.svg", "Repeated Stage 2 pass rate", [row[0] for row in repeated_summary], [float(row[5]) for row in repeated_summary])
+    pipeline_circuits = [row["circuit_name"] for row in pipeline_rows if row["stage_type"] == "noisy"]
+    pipeline_h = [float(row["hellinger"]) for row in pipeline_rows if row["stage_type"] == "noisy"]
+    pipeline_tvd = [float(row["tvd"]) for row in pipeline_rows if row["stage_type"] == "noisy"]
+    _svg_bar_chart(output_dir / "pipeline_stage2_hellinger.svg", "Single-run Stage 2 Hellinger", pipeline_circuits, pipeline_h)
+    _svg_bar_chart(output_dir / "pipeline_stage2_tvd.svg", "Single-run Stage 2 TVD", pipeline_circuits, pipeline_tvd)
     _svg_bar_chart(
         output_dir / "threshold_pass_rate.svg", "Threshold pass rates",
         [f"{row[0]}@{row[1]:g}" for row in threshold_summary],
@@ -671,7 +724,11 @@ def generate_reports(
         summary_lines.append(f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]} |")
     summary_lines += ["", "## Provenance", "", "```json", json.dumps(manifest, indent=2, default=list), "```", "",
                       "These experiments use AerSimulator and IBM fake backends. No real QPU execution is represented."]
-    (output_dir / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+    summary_text = "\n".join(summary_lines) + "\n"
+    (output_dir / "summary.md").write_text(summary_text, encoding="utf-8")
+    if summary_path is not None:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(summary_text, encoding="utf-8")
     html_rows = "".join(
         f"<tr><td>{html.escape(row['circuit_name'])}</td><td>{html.escape(row['stage_name'])}</td>"
         f"<td>{html.escape(row['decision'])}</td><td>{row['hellinger'] if row['hellinger'] is not None else '-'}</td>"
@@ -680,7 +737,7 @@ def generate_reports(
     (output_dir / "report.html").write_text(
         f"<html><body><h1>QPromote selected-run report</h1><p>{html.escape(json.dumps(manifest, default=list))}</p>"
         f"<h2>Pipeline {html.escape(pipeline_run)}</h2><table><tr><th>Circuit</th><th>Stage</th><th>Decision</th><th>Hellinger</th><th>TVD</th></tr>{html_rows}</table>"
-        f"<p><img src='repeated_mean_hellinger.svg'><img src='repeated_pass_rate.svg'><img src='threshold_pass_rate.svg'></p></body></html>",
+        f"<p><img src='pipeline_stage2_hellinger.svg'><img src='pipeline_stage2_tvd.svg'><img src='repeated_mean_hellinger_sd.svg'><img src='repeated_pass_rate.svg'><img src='threshold_pass_rate.svg'></p></body></html>",
         encoding="utf-8",
     )
     return manifest
@@ -1108,6 +1165,7 @@ def main(argv: List[str] | None = None) -> int:
     report_p.add_argument("--pipeline-run", required=True)
     report_p.add_argument("--repeated-run", required=True)
     report_p.add_argument("--threshold-run", required=True)
+    report_p.add_argument("--summary-file", help="Also write the generated Markdown summary to this path")
     args = parser.parse_args(argv)
 
     try:
@@ -1129,6 +1187,7 @@ def main(argv: List[str] | None = None) -> int:
             manifest = generate_reports(
                 Path(args.db), Path(args.output), args.pipeline_run,
                 args.repeated_run, args.threshold_run,
+                Path(args.summary_file) if args.summary_file else None,
             )
             print(json.dumps(manifest, indent=2, default=list))
             return 0
