@@ -13,6 +13,18 @@ python -m pip install -r requirements.txt
 python qpromote.py run pipeline.yaml
 ```
 
+For statistical Stage 2 evidence, run 20 repetitions per circuit:
+
+```bash
+python qpromote.py repeated-run pipeline.yaml --runs 20
+```
+
+To evaluate the Stage 2 threshold policy:
+
+```bash
+python qpromote.py threshold-scan pipeline.yaml --thresholds 0.80,0.85,0.90,0.925,0.95
+```
+
 The run also creates `qpromote_report.html`, a standalone visual report with
 Hellinger charts and the complete evidence table. In GitHub Actions, download
 the `qpromote-results` artifact to view it locally.
@@ -51,17 +63,26 @@ Demonstration only
 
 - Python 3.12
 - qiskit==2.5.2
-- qiskit-aer
-- qiskit-ibm-runtime
-- PyYAML
+- qiskit-aer==0.15.1
+- qiskit-ibm-runtime==0.35.0
+- PyYAML==6.0.2
 
 ## Evidence Database
 
-SQLite evidence bundle records: timestamp, circuit, stage, backend,
-Hellinger fidelity, TVD, fidelity, gate count, qubit count, CFP, decision.
+SQLite evidence bundle records include run ID, timestamp, circuit, stage,
+backend, shots, Hellinger fidelity, TVD, fidelity, gate count, qubit count,
+CFP, Aer version, IBM Runtime version, and decision. Repeated Stage 2 results
+are stored in the same `evidence` table. Threshold experiments are stored in
+the separate `threshold_scan` table.
 
 ```
 sqlite3 qpromote_evidence.db "SELECT circuit_name, stage_name, hellinger, tvd, decision FROM evidence;"
+```
+
+Example repeated-run summary:
+
+```bash
+sqlite3 qpromote_evidence.db "SELECT circuit_name, AVG(hellinger), COUNT(*), SUM(decision = 'PASS') FROM evidence WHERE stage_name LIKE '%repeat_%' GROUP BY circuit_name;"
 ```
 
 ## Citation
