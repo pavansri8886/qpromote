@@ -1,0 +1,63 @@
+# Temporary clean-evidence configuration for thesis rerun
+project: QPromote Thesis Fresh Evaluation
+db_path: qpromote_fresh_evidence.db
+shots: 4096
+halt_on_block: false
+report_path: qpromote_fresh_report.html
+
+stages:
+  - name: stage1_bell
+    backend: aer_simulator
+    circuit: bell
+    thresholds: {fidelity: 0.90}
+  - name: stage2_bell
+    backend: FakeManilaV2
+    circuit: bell
+    thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
+  - name: stage3_bell
+    backend: FakeSherbrooke
+    circuit: bell
+  - name: stage1_ghz
+    backend: aer_simulator
+    circuit: ghz
+    thresholds: {fidelity: 0.90}
+  - name: stage2_ghz
+    backend: FakeManilaV2
+    circuit: ghz
+    thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
+  - name: stage3_ghz
+    backend: FakeSherbrooke
+    circuit: ghz
+  - name: stage1_grover
+    backend: aer_simulator
+    circuit: grover
+    thresholds: {fidelity: 0.90}
+  - name: stage2_grover
+    backend: FakeManilaV2
+    circuit: grover
+    thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
+  - name: stage3_grover
+    backend: FakeSherbrooke
+    circuit: grover
+  - name: stage1_bv
+    backend: aer_simulator
+    circuit: bv
+    thresholds: {fidelity: 0.90}
+  - name: stage2_bv
+    backend: FakeManilaV2
+    circuit: bv
+    thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
+  - name: stage3_bv
+    backend: FakeSherbrooke
+    circuit: bv
+  - name: stage1_qft
+    backend: aer_simulator
+    circuit: qft
+    thresholds: {fidelity: 0.90}
+  - name: stage2_qft
+    backend: FakeManilaV2
+    circuit: qft
+    thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
+  - name: stage3_qft
+    backend: FakeSherbrooke
+    circuit: qft

@@ -641,7 +641,8 @@ def main(argv: List[str] | None = None) -> int:
         if args.command == "run":
             print(f"\nQPromote v{VERSION} — starting pipeline: {args.pipeline}\n")
             records = run_pipeline(Path(args.pipeline))
-            print(f"\nDone. Evidence stored in: qpromote_evidence.db")
+            config = load_config(Path(args.pipeline))
+            print(f"\nDone. Evidence stored in: {config.get('db_path', 'qpromote_evidence.db')}")
             return 0
         elif args.command == "repeated-run":
             run_repeated(Path(args.pipeline), args.runs)
