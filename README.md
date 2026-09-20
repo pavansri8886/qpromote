@@ -63,8 +63,8 @@ Demonstration only
 
 - Python 3.12
 - qiskit==2.5.2
-- qiskit-aer==0.15.1
-- qiskit-ibm-runtime==0.35.0
+- qiskit-aer==0.17.2
+- qiskit-ibm-runtime==0.49.0
 - PyYAML==6.0.2
 
 ## Evidence Database

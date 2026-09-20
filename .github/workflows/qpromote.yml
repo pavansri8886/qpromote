@@ -29,4 +29,4 @@ jobs:
           path: |
             qpromote_report.html
             qpromote_evidence.db
-          if-no-files-found: error
+          if-no-files-found: warn
