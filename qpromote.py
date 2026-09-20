@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 QPromote — Declarative Progressive Delivery Pipeline for Quantum Circuits
-Version: 1.1.0
+Version: 1.3.0
 Authors: Hassan Soubra, Pavan Kumar Naganaboina, Samuel Richard,
          Tuna Hacaloglu, Donatien Koulla Moulla, Pierre Bourque, Alain Abran
 
@@ -11,8 +11,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
+import json
 import math
+import subprocess
 import sqlite3
 import sys
 import uuid
@@ -30,7 +33,7 @@ from qiskit_ibm_runtime.fake_provider import FakeManilaV2, FakeSherbrooke
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Known ideal distributions for supported circuits
 IDEAL_DISTRIBUTIONS: Dict[str, Dict[str, float]] = {
@@ -38,7 +41,7 @@ IDEAL_DISTRIBUTIONS: Dict[str, Dict[str, float]] = {
     "ghz":    {"000": 0.5, "111": 0.5},
     "grover": {"11": 1.0},          # 2-qubit Grover marks |11>
     "bv":     {"11": 1.0},          # BV with hidden string "11" outputs |11>
-    "qft":    None,                  # QFT: compare Stage 2 vs Stage 1 baseline
+    "qft":    {"000": 1.0},         # QFT(|+++>) = |000>
 }
 
 
@@ -100,9 +103,41 @@ def compute_cfp(circuit: QuantumCircuit) -> int:
     Each measurement: 1 Write + 1 Read = 2 CFP
     Reference: Khattab, Elsayed & Soubra (2022); Soubra et al. (2025).
     """
-    gate_cfp = sum(circuit.count_ops().values()) * 2
-    measure_cfp = circuit.num_clbits * 2
+    gate_cfp = count_quantum_operations(circuit) * 2
+    measure_cfp = count_measurements(circuit) * 2
     return gate_cfp + measure_cfp
+
+
+def count_measurements(circuit: QuantumCircuit) -> int:
+    return int(circuit.count_ops().get("measure", 0))
+
+
+def count_quantum_operations(circuit: QuantumCircuit) -> int:
+    """Count operations other than classical measurements and barriers."""
+    return sum(
+        count for name, count in circuit.count_ops().items()
+        if name not in {"measure", "barrier"}
+    )
+
+
+def make_seed(base_seed: int, *parts: object) -> int:
+    payload = ":".join([str(base_seed), *(str(part) for part in parts)])
+    return int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
+
+
+def git_commit() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def config_identity(cfg: Dict[str, Any]) -> str:
+    payload = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 # ── Circuit Definitions ────────────────────────────────────────────────────────
@@ -156,9 +191,8 @@ def bv_circuit() -> QuantumCircuit:
 
 def qft_circuit() -> QuantumCircuit:
     """3-qubit Quantum Fourier Transform applied to uniform superposition.
-    
-    Comparison strategy: relative fidelity between Stage 2 and Stage 1 baseline.
-    No fixed ideal distribution — Stage 1 output serves as reference.
+
+    The expected measured output is |000> with probability 1.
     """
     qc = QuantumCircuit(3, 3)
     # Uniform superposition input
@@ -208,17 +242,26 @@ CREATE TABLE IF NOT EXISTS evidence (
     timestamp        TEXT    NOT NULL,
     circuit_name     TEXT    NOT NULL,
     stage_name       TEXT    NOT NULL,
+    stage_type       TEXT    NOT NULL,
     backend_name     TEXT    NOT NULL,
     shots            INTEGER NOT NULL,
+    requested_shots  INTEGER NOT NULL,
+    executed_shots   INTEGER NOT NULL,
     hellinger        REAL,
     tvd              REAL,
-    fidelity         REAL,
+    distribution_similarity REAL,
     gate_count       INTEGER,
     qubit_count      INTEGER,
     classical_bits   INTEGER,
     cfp              INTEGER,
     aer_version      TEXT    NOT NULL,
     runtime_version  TEXT    NOT NULL,
+    seed_simulator   INTEGER,
+    seed_transpiler  INTEGER,
+    raw_counts       TEXT,
+    reference_distribution TEXT,
+    code_commit      TEXT,
+    config_identity  TEXT,
     decision         TEXT    NOT NULL,
     notes            TEXT
 );
@@ -228,13 +271,22 @@ CREATE TABLE IF NOT EXISTS threshold_scan (
     run_id           TEXT    NOT NULL,
     timestamp        TEXT    NOT NULL,
     circuit_name     TEXT    NOT NULL,
+    repetition       INTEGER NOT NULL,
     threshold        REAL    NOT NULL,
     shots            INTEGER NOT NULL,
+    requested_shots  INTEGER NOT NULL,
+    executed_shots   INTEGER NOT NULL,
     hellinger        REAL,
     tvd              REAL,
     decision         TEXT    NOT NULL,
     aer_version      TEXT    NOT NULL,
     runtime_version  TEXT    NOT NULL
+    ,seed_simulator  INTEGER
+    ,seed_transpiler INTEGER
+    ,raw_counts      TEXT
+    ,reference_distribution TEXT
+    ,code_commit     TEXT
+    ,config_identity TEXT
 );
 """
 
@@ -257,6 +309,36 @@ def init_db(path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE evidence ADD COLUMN aer_version TEXT NOT NULL DEFAULT 'unknown'")
     if "runtime_version" not in columns:
         conn.execute("ALTER TABLE evidence ADD COLUMN runtime_version TEXT NOT NULL DEFAULT 'unknown'")
+    migrations = {
+        "stage_type": "TEXT NOT NULL DEFAULT 'unknown'",
+        "requested_shots": "INTEGER NOT NULL DEFAULT 0",
+        "executed_shots": "INTEGER NOT NULL DEFAULT 0",
+        "distribution_similarity": "REAL",
+        "seed_simulator": "INTEGER",
+        "seed_transpiler": "INTEGER",
+        "raw_counts": "TEXT",
+        "reference_distribution": "TEXT",
+        "code_commit": "TEXT",
+        "config_identity": "TEXT",
+    }
+    for column, definition in migrations.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE evidence ADD COLUMN {column} {definition}")
+    threshold_columns = {row[1] for row in conn.execute("PRAGMA table_info(threshold_scan)")}
+    threshold_migrations = {
+        "repetition": "INTEGER NOT NULL DEFAULT 0",
+        "requested_shots": "INTEGER NOT NULL DEFAULT 0",
+        "executed_shots": "INTEGER NOT NULL DEFAULT 0",
+        "seed_simulator": "INTEGER",
+        "seed_transpiler": "INTEGER",
+        "raw_counts": "TEXT",
+        "reference_distribution": "TEXT",
+        "code_commit": "TEXT",
+        "config_identity": "TEXT",
+    }
+    for column, definition in threshold_migrations.items():
+        if column not in threshold_columns:
+            conn.execute(f"ALTER TABLE threshold_scan ADD COLUMN {column} {definition}")
     conn.commit()
     return conn
 
@@ -264,32 +346,52 @@ def init_db(path: Path) -> sqlite3.Connection:
 def store_evidence(conn: sqlite3.Connection, rec: Dict[str, Any]) -> None:
     conn.execute("""
         INSERT INTO evidence
-            (run_id, timestamp, circuit_name, stage_name, backend_name, shots,
-             hellinger, tvd, fidelity, gate_count, qubit_count,
-             classical_bits, cfp, aer_version, runtime_version, decision, notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?)
+            (run_id, timestamp, circuit_name, stage_name, stage_type, backend_name, shots,
+             requested_shots, executed_shots, hellinger, tvd,
+             distribution_similarity, gate_count, qubit_count, classical_bits,
+             cfp, aer_version, runtime_version, seed_simulator, seed_transpiler,
+             raw_counts, reference_distribution, code_commit, config_identity,
+             decision, notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec["run_id"], rec["timestamp"], rec["circuit_name"], rec["stage_name"],
+        rec["stage_type"],
         rec["backend_name"], rec["shots"],
-        rec.get("hellinger"), rec.get("tvd"), rec.get("fidelity"),
+        rec["requested_shots"], rec["executed_shots"],
+        rec.get("hellinger"), rec.get("tvd"), rec.get("distribution_similarity"),
         rec.get("gate_count"), rec.get("qubit_count"),
         rec.get("classical_bits"), rec.get("cfp"),
         rec["aer_version"], rec["runtime_version"],
+        rec.get("seed_simulator"), rec.get("seed_transpiler"),
+        json.dumps(rec.get("raw_counts", {}), sort_keys=True),
+        json.dumps(rec.get("reference_distribution", {}), sort_keys=True),
+        rec.get("code_commit"), rec.get("config_identity"),
         rec["decision"], rec.get("notes"),
     ))
     conn.commit()
 
 
-def store_threshold_result(conn: sqlite3.Connection, rec: Dict[str, Any], threshold: float) -> None:
+def store_threshold_result(
+    conn: sqlite3.Connection,
+    rec: Dict[str, Any],
+    threshold: float,
+    repetition: int,
+) -> None:
     conn.execute("""
         INSERT INTO threshold_scan
-            (run_id, timestamp, circuit_name, threshold, shots,
-             hellinger, tvd, decision, aer_version, runtime_version)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+            (run_id, timestamp, circuit_name, repetition, threshold, shots,
+               requested_shots, executed_shots, hellinger, tvd, decision,
+               aer_version, runtime_version, seed_simulator, seed_transpiler,
+               raw_counts, reference_distribution, code_commit, config_identity)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        rec["run_id"], rec["timestamp"], rec["circuit_name"], threshold,
-        rec["shots"], rec.get("hellinger"), rec.get("tvd"), rec["decision"],
-        rec["aer_version"], rec["runtime_version"],
+        rec["run_id"], rec["timestamp"], rec["circuit_name"], repetition, threshold,
+        rec["shots"], rec["requested_shots"], rec["executed_shots"],
+        rec.get("hellinger"), rec.get("tvd"), rec["decision"],
+        rec["aer_version"], rec["runtime_version"], rec.get("seed_simulator"),
+        rec.get("seed_transpiler"), json.dumps(rec.get("raw_counts", {}), sort_keys=True),
+        json.dumps(rec.get("reference_distribution", {}), sort_keys=True),
+        rec.get("code_commit"), rec.get("config_identity"),
     ))
     conn.commit()
 
@@ -323,72 +425,91 @@ table{{width:100%;border-collapse:collapse}}th,td{{padding:.6rem;border-bottom:1
     path.write_text(document, encoding="utf-8")
 
 
+def noisy_decision(hellinger: float, tvd: float, min_hellinger: float, max_tvd: float) -> str:
+    return "PASS" if hellinger >= min_hellinger and tvd <= max_tvd else "BLOCK"
+
+
 # ── Pipeline Execution ─────────────────────────────────────────────────────────
 
 def run_stage(
     run_id: str,
     circuit_name: str,
     stage_name: str,
+    stage_type: str,
     backend_name: str,
     circuit: QuantumCircuit,
     thresholds: Dict[str, float],
     ideal_dist: Dict[str, float] | None,
-    shots: int = 4096,
+    requested_shots: int = 4096,
+    seed_simulator: int | None = None,
+    seed_transpiler: int | None = None,
+    config_id: str = "unknown",
 ) -> Dict[str, Any]:
     """Execute one pipeline stage and evaluate quality gate."""
     backend_label, backend = resolve_backend(backend_name)
 
     # Transpile and execute
-    t_qc = transpile(circuit, backend, optimization_level=1)
-    counts = backend.run(t_qc, shots=shots).result().get_counts()
+    t_qc = transpile(
+        circuit, backend, optimization_level=1,
+        seed_transpiler=seed_transpiler,
+    )
+    result = backend.run(
+        t_qc, shots=requested_shots, seed_simulator=seed_simulator,
+    ).result()
+    counts = result.get_counts()
 
     # Use num_clbits for normalization — critical fix for BV (3q/2c mismatch)
     n_bits = circuit.num_clbits
     measured = normalize_counts(counts, n_bits)
 
     # Metrics
-    ref = ideal_dist if ideal_dist is not None else measured  # QFT: self-compare at Stage 1
+    ref = ideal_dist or {}
     h_score  = hellinger_fidelity(measured, ref)
     tvd_val  = total_variation_distance(measured, ref)
-    fidelity = max(0.0, 1.0 - tvd_val)
-    gc       = sum(circuit.count_ops().values())
+    similarity = max(0.0, 1.0 - tvd_val)
+    gc       = count_quantum_operations(circuit)
     cfp_val  = compute_cfp(circuit)
 
     # Gate decision
-    stage_key = stage_name.lower()
-    if "stage3" in stage_key or backend_label == "FakeSherbrooke":
+    if stage_type == "proxy":
         decision = "DEMONSTRATION"
         notes = "Hardware proxy stage. FakeSherbrooke used as QPU demonstration."
-    elif "stage2" in stage_key:
+    elif stage_type == "noisy":
         min_h   = float(thresholds.get("hellinger_fidelity", 0.90))
         max_tvd = float(thresholds.get("tvd", 0.10))
-        if h_score >= min_h and tvd_val <= max_tvd:
-            decision = "PASS"
-        else:
-            decision = "BLOCK"
+        decision = noisy_decision(h_score, tvd_val, min_h, max_tvd)
         notes = (f"Noisy gate: H>={min_h:.2f}, TVD<={max_tvd:.2f}. "
                  f"Got H={h_score:.4f}, TVD={tvd_val:.4f}.")
-    else:  # stage1
+    else:  # ideal
         min_fid = float(thresholds.get("fidelity", 0.90))
-        decision = "PASS" if fidelity >= min_fid else "BLOCK"
-        notes = f"Ideal gate: fidelity>={min_fid:.2f}. Got {fidelity:.4f}."
+        decision = "PASS" if similarity >= min_fid else "BLOCK"
+        notes = f"Ideal distribution-similarity score>={min_fid:.2f}. Got {similarity:.4f}."
 
     return {
         "run_id":          run_id,
         "timestamp":      utc_timestamp(),
         "circuit_name":   circuit_name,
         "stage_name":     stage_name,
+        "stage_type":     stage_type,
         "backend_name":   backend_label,
-        "shots":          shots,
+        "shots":          requested_shots,
+        "requested_shots": requested_shots,
+        "executed_shots": requested_shots,
         "hellinger":      round(h_score, 6),
         "tvd":            round(tvd_val, 6),
-        "fidelity":       round(fidelity, 6),
+        "distribution_similarity": round(similarity, 6),
         "gate_count":     gc,
         "qubit_count":    circuit.num_qubits,
         "classical_bits": circuit.num_clbits,
         "cfp":            cfp_val,
         "aer_version":    dependency_versions()[0],
         "runtime_version": dependency_versions()[1],
+        "seed_simulator": seed_simulator,
+        "seed_transpiler": seed_transpiler,
+        "raw_counts":     counts,
+        "reference_distribution": ref,
+        "code_commit":    git_commit(),
+        "config_identity": config_id,
         "decision":       decision,
         "notes":          notes,
         "_measured_dist": measured,   # internal — for QFT Stage 2 baseline
@@ -397,97 +518,67 @@ def run_stage(
 
 def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
     """Load YAML config and execute the full pipeline."""
-    if not pipeline_path.exists():
-        raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
-    with pipeline_path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-
+    cfg = load_config(pipeline_path)
     db_path       = Path(cfg.get("db_path", "qpromote_evidence.db"))
     conn          = init_db(db_path)
     run_id        = new_run_id()
     shots         = int(cfg.get("shots", 4096))
+    base_seed     = int(cfg.get("seed", 20260920))
+    config_id     = config_identity(cfg)
     halt_on_block = bool(cfg.get("halt_on_block", False))
     report_path   = Path(cfg.get("report_path", "qpromote_report.html"))
     records: List[Dict[str, Any]] = []
+    decisions: Dict[str, str] = {}
 
-    for stage_cfg in cfg.get("stages", []):
+    for stage_index, stage_cfg in enumerate(cfg.get("stages", [])):
         stage_name   = str(stage_cfg.get("name", "stage"))
+        stage_type   = str(stage_cfg["type"])
         backend_name = str(stage_cfg.get("backend", "aer_simulator"))
         circuit_name = str(stage_cfg.get("circuit", "bell")).lower()
         thresholds   = stage_cfg.get("thresholds", {}) or {}
-
-        if circuit_name not in CIRCUIT_REGISTRY:
-            print(f"  [SKIP] Unknown circuit '{circuit_name}' in {stage_name}")
-            continue
-
         circuit    = CIRCUIT_REGISTRY[circuit_name]()
         ideal_dist = IDEAL_DISTRIBUTIONS.get(circuit_name)
-        stage_key = stage_name.lower().replace(" ", "")
 
-        if "stage3" in stage_key:
-            prior_stage2 = next(
-                (r for r in records
-                 if r["circuit_name"] == circuit_name
-                 and "stage2" in r["stage_name"].lower().replace(" ", "")),
-                None,
+        prior_type = {"noisy": "ideal", "proxy": "noisy"}.get(stage_type)
+        if prior_type and decisions.get(circuit_name) != "PASS":
+            rec = make_skipped_record(
+                run_id, circuit_name, stage_name, stage_type, backend_name,
+                circuit, shots, config_id, f"Prior {prior_type} stage did not PASS; execution skipped.",
             )
-            if prior_stage2 and prior_stage2["decision"] == "BLOCK":
-                rec = {
-                    "run_id": run_id,
-                    "timestamp": utc_timestamp(),
-                    "circuit_name": circuit_name,
-                    "stage_name": stage_name,
-                    "backend_name": backend_name,
-                    "shots": shots,
-                    "hellinger": None,
-                    "tvd": None,
-                    "fidelity": None,
-                    "gate_count": sum(circuit.count_ops().values()),
-                    "qubit_count": circuit.num_qubits,
-                    "classical_bits": circuit.num_clbits,
-                    "cfp": compute_cfp(circuit),
-                    "aer_version": dependency_versions()[0],
-                    "runtime_version": dependency_versions()[1],
-                    "decision": "SKIPPED",
-                    "notes": "Stage 2 BLOCK; hardware proxy execution skipped.",
-                }
-                store_evidence(conn, rec)
-                records.append(rec)
-                print(f"  - {stage_name} | {backend_name:<18} | SKIPPED (Stage 2 BLOCK)")
-                continue
-
-        # QFT: Stage 2 and Stage 3 compare against Stage 1 output, not a fixed ideal
-        if ideal_dist is None and records:
-            prev_stage1 = next(
-                (r for r in records
-                 if r["circuit_name"] == circuit_name and "stage1" in r["stage_name"].lower().replace(" ", "")),
-                None
-            )
-            if prev_stage1:
-                ideal_dist = prev_stage1.get("_measured_dist")
+            store_evidence(conn, rec)
+            records.append(rec)
+            decisions[circuit_name] = "SKIPPED"
+            print(f"  - {stage_name} | {backend_name:<18} | SKIPPED (prior stage did not PASS)")
+            continue
 
         rec = run_stage(
             run_id=run_id,
             circuit_name=circuit_name,
             stage_name=stage_name,
+            stage_type=stage_type,
             backend_name=backend_name,
             circuit=circuit,
             thresholds=thresholds,
             ideal_dist=ideal_dist,
-            shots=shots,
+            requested_shots=shots,
+            seed_simulator=make_seed(base_seed, "sim", stage_index),
+            seed_transpiler=make_seed(base_seed, "transpile", stage_index),
+            config_id=config_id,
         )
 
         # Persist (drop internal key before storage)
         storage_rec = {k: v for k, v in rec.items() if not k.startswith("_")}
         store_evidence(conn, storage_rec)
         records.append(rec)
+        decisions[circuit_name] = rec["decision"]
 
         flag = "✓" if rec["decision"] in ("PASS", "DEMONSTRATION") else "✗"
         print(f"  {flag} {stage_name} | {rec['backend_name']:<18} | "
               f"H={rec['hellinger']:.4f}  TVD={rec['tvd']:.4f}  "
               f"CFP={rec['cfp']:<4} → {rec['decision']}")
 
-        # Halt pipeline on BLOCK only if configured
+        # Optionally stop the entire run, while default behavior continues
+        # with independent circuits whose own promotion state is tracked.
         if rec["decision"] == "BLOCK" and halt_on_block:
             print(f"\n  ⛔ Pipeline halted at {stage_name}: {rec['notes']}")
             break
@@ -498,20 +589,96 @@ def run_pipeline(pipeline_path: Path) -> List[Dict[str, Any]]:
     return records
 
 
+def make_skipped_record(
+    run_id: str,
+    circuit_name: str,
+    stage_name: str,
+    stage_type: str,
+    backend_name: str,
+    circuit: QuantumCircuit,
+    requested_shots: int,
+    config_id: str,
+    notes: str,
+) -> Dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "timestamp": utc_timestamp(),
+        "circuit_name": circuit_name,
+        "stage_name": stage_name,
+        "stage_type": stage_type,
+        "backend_name": backend_name,
+        "shots": 0,
+        "requested_shots": requested_shots,
+        "executed_shots": 0,
+        "hellinger": None,
+        "tvd": None,
+        "distribution_similarity": None,
+        "gate_count": count_quantum_operations(circuit),
+        "qubit_count": circuit.num_qubits,
+        "classical_bits": circuit.num_clbits,
+        "cfp": compute_cfp(circuit),
+        "aer_version": dependency_versions()[0],
+        "runtime_version": dependency_versions()[1],
+        "seed_simulator": None,
+        "seed_transpiler": None,
+        "raw_counts": {},
+        "reference_distribution": IDEAL_DISTRIBUTIONS[circuit_name],
+        "code_commit": git_commit(),
+        "config_identity": config_id,
+        "decision": "SKIPPED",
+        "notes": notes,
+    }
+
+
 def load_config(pipeline_path: Path) -> Dict[str, Any]:
     if not pipeline_path.exists():
         raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
     with pipeline_path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        cfg = yaml.safe_load(f) or {}
+    validate_config(cfg)
+    return cfg
+
+
+def validate_config(cfg: Dict[str, Any]) -> None:
+    if not isinstance(cfg.get("shots", 4096), int) or int(cfg.get("shots", 4096)) <= 0:
+        raise ValueError("shots must be a positive integer")
+    stages = cfg.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise ValueError("stages must be a non-empty list")
+    expected_order = {"ideal": 0, "noisy": 1, "proxy": 2}
+    grouped: Dict[str, List[str]] = {}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            raise ValueError("each stage must be a mapping")
+        stage_type = stage.get("type")
+        circuit_name = str(stage.get("circuit", "")).lower()
+        if stage_type not in expected_order:
+            raise ValueError(f"stage '{stage.get('name', '')}' must have type ideal, noisy, or proxy")
+        if circuit_name not in CIRCUIT_REGISTRY:
+            raise ValueError(f"unsupported circuit '{circuit_name}'")
+        if not stage.get("backend"):
+            raise ValueError(f"stage '{stage.get('name', '')}' must define backend")
+        thresholds = stage.get("thresholds", {}) or {}
+        for key, value in thresholds.items():
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"threshold '{key}' must be numeric") from exc
+            if not 0.0 <= numeric <= 1.0:
+                raise ValueError(f"threshold '{key}' must be between 0 and 1")
+        grouped.setdefault(circuit_name, []).append(stage_type)
+    for circuit_name, types in grouped.items():
+        if types != ["ideal", "noisy", "proxy"]:
+            raise ValueError(
+                f"stages for '{circuit_name}' must appear once in order ideal, noisy, proxy"
+            )
 
 
 def stage_configurations(cfg: Dict[str, Any], stage_number: str) -> Dict[str, Dict[str, Any]]:
-    marker = stage_number.lower()
     result = {}
     for stage_cfg in cfg.get("stages", []):
-        name = str(stage_cfg.get("name", "")).lower().replace(" ", "")
         circuit_name = str(stage_cfg.get("circuit", "")).lower()
-        if marker in name and circuit_name in CIRCUIT_REGISTRY:
+        if stage_cfg.get("type") == stage_number and circuit_name in CIRCUIT_REGISTRY:
             result[circuit_name] = stage_cfg
     return result
 
@@ -522,23 +689,8 @@ def stage2_baseline(
     run_id: str,
     shots: int,
 ) -> Dict[str, float] | None:
-    """Create an in-memory Stage 1 reference, required only for QFT."""
-    if IDEAL_DISTRIBUTIONS.get(circuit_name) is not None:
-        return IDEAL_DISTRIBUTIONS[circuit_name]
-    stage1_cfg = stage_configurations(cfg, "stage1").get(circuit_name)
-    if not stage1_cfg:
-        raise ValueError(f"No Stage 1 configuration found for '{circuit_name}'")
-    baseline = run_stage(
-        run_id=run_id,
-        circuit_name=circuit_name,
-        stage_name=str(stage1_cfg.get("name", "stage1")),
-        backend_name=str(stage1_cfg.get("backend", "aer_simulator")),
-        circuit=CIRCUIT_REGISTRY[circuit_name](),
-        thresholds=stage1_cfg.get("thresholds", {}) or {},
-        ideal_dist=None,
-        shots=shots,
-    )
-    return baseline["_measured_dist"]
+    """Return the independent expected distribution for a circuit."""
+    return IDEAL_DISTRIBUTIONS[circuit_name]
 
 
 def run_repeated(pipeline_path: Path, repetitions: int) -> List[Dict[str, Any]]:
@@ -550,7 +702,9 @@ def run_repeated(pipeline_path: Path, repetitions: int) -> List[Dict[str, Any]]:
     conn = init_db(db_path)
     run_id = new_run_id()
     shots = int(cfg.get("shots", 4096))
-    stage2_configs = stage_configurations(cfg, "stage2")
+    base_seed = int(cfg.get("seed", 20260920))
+    config_id = config_identity(cfg)
+    stage2_configs = stage_configurations(cfg, "noisy")
     records: List[Dict[str, Any]] = []
 
     for circuit_name, stage_cfg in stage2_configs.items():
@@ -560,11 +714,15 @@ def run_repeated(pipeline_path: Path, repetitions: int) -> List[Dict[str, Any]]:
                 run_id=run_id,
                 circuit_name=circuit_name,
                 stage_name=f"{stage_cfg.get('name', 'stage2')}_repeat_{iteration:02d}",
+                stage_type="noisy",
                 backend_name=str(stage_cfg.get("backend", "FakeManilaV2")),
                 circuit=CIRCUIT_REGISTRY[circuit_name](),
                 thresholds=stage_cfg.get("thresholds", {}) or {},
                 ideal_dist=baseline,
-                shots=shots,
+                requested_shots=shots,
+                seed_simulator=make_seed(base_seed, "repeated", circuit_name, iteration, "sim"),
+                seed_transpiler=make_seed(base_seed, "repeated", circuit_name, iteration, "transpile"),
+                config_id=config_id,
             )
             store_evidence(conn, {k: v for k, v in rec.items() if not k.startswith("_")})
             records.append(rec)
@@ -573,35 +731,48 @@ def run_repeated(pipeline_path: Path, repetitions: int) -> List[Dict[str, Any]]:
     return records
 
 
-def run_threshold_scan(pipeline_path: Path, thresholds: List[float]) -> None:
+def run_threshold_scan(pipeline_path: Path, thresholds: List[float], repetitions: int = 20) -> None:
     """Evaluate Stage 2 at each Hellinger threshold and store scan results."""
     if not thresholds:
         raise ValueError("At least one threshold is required")
+    if repetitions < 1:
+        raise ValueError("--runs must be at least 1")
     cfg = load_config(pipeline_path)
     db_path = Path(cfg.get("db_path", "qpromote_evidence.db"))
     conn = init_db(db_path)
     run_id = new_run_id()
     shots = int(cfg.get("shots", 4096))
-    stage2_configs = stage_configurations(cfg, "stage2")
+    base_seed = int(cfg.get("seed", 20260920))
+    config_id = config_identity(cfg)
+    stage2_configs = stage_configurations(cfg, "noisy")
     count = 0
 
     for circuit_name, stage_cfg in stage2_configs.items():
         baseline = stage2_baseline(circuit_name, cfg, run_id, shots)
         configured = stage_cfg.get("thresholds", {}) or {}
         max_tvd = float(configured.get("tvd", 0.10))
-        for threshold in thresholds:
+        for iteration in range(1, repetitions + 1):
             rec = run_stage(
                 run_id=run_id,
                 circuit_name=circuit_name,
-                stage_name=f"stage2_threshold_{threshold:g}",
+                stage_name=f"{stage_cfg.get('name', 'stage2')}_scan_{iteration:02d}",
+                stage_type="noisy",
                 backend_name=str(stage_cfg.get("backend", "FakeManilaV2")),
                 circuit=CIRCUIT_REGISTRY[circuit_name](),
-                thresholds={"hellinger_fidelity": threshold, "tvd": max_tvd},
+                thresholds={"hellinger_fidelity": 0.0, "tvd": max_tvd},
                 ideal_dist=baseline,
-                shots=shots,
+                requested_shots=shots,
+                seed_simulator=make_seed(base_seed, "threshold", circuit_name, iteration, "sim"),
+                seed_transpiler=make_seed(base_seed, "threshold", circuit_name, iteration, "transpile"),
+                config_id=config_id,
             )
-            store_threshold_result(conn, rec, threshold)
-            count += 1
+            for threshold in thresholds:
+                threshold_rec = dict(rec)
+                threshold_rec["decision"] = noisy_decision(
+                    rec["hellinger"], rec["tvd"], threshold, max_tvd,
+                )
+                store_threshold_result(conn, threshold_rec, threshold, iteration)
+                count += 1
     conn.close()
     print(f"Threshold scan {run_id}: {count} records written to threshold_scan")
 
@@ -635,6 +806,8 @@ def main(argv: List[str] | None = None) -> int:
         required=True,
         help="Comma-separated thresholds, for example 0.80,0.85,0.90,0.925,0.95",
     )
+    scan_p.add_argument("--runs", type=int, default=20,
+                        help="Number of sampled executions per circuit")
     args = parser.parse_args(argv)
 
     try:
@@ -649,7 +822,7 @@ def main(argv: List[str] | None = None) -> int:
             return 0
         elif args.command == "threshold-scan":
             thresholds = [float(value.strip()) for value in args.thresholds.split(",") if value.strip()]
-            run_threshold_scan(Path(args.pipeline), thresholds)
+            run_threshold_scan(Path(args.pipeline), thresholds, args.runs)
             return 0
         parser.print_help()
         return 0

@@ -2,62 +2,78 @@
 project: QPromote Thesis Fresh Evaluation
 db_path: qpromote_fresh_evidence.db
 shots: 4096
+seed: 20260920
 halt_on_block: false
 report_path: qpromote_fresh_report.html
 
 stages:
   - name: stage1_bell
+    type: ideal
     backend: aer_simulator
     circuit: bell
     thresholds: {fidelity: 0.90}
   - name: stage2_bell
+    type: noisy
     backend: FakeManilaV2
     circuit: bell
     thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
   - name: stage3_bell
+    type: proxy
     backend: FakeSherbrooke
     circuit: bell
   - name: stage1_ghz
+    type: ideal
     backend: aer_simulator
     circuit: ghz
     thresholds: {fidelity: 0.90}
   - name: stage2_ghz
+    type: noisy
     backend: FakeManilaV2
     circuit: ghz
     thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
   - name: stage3_ghz
+    type: proxy
     backend: FakeSherbrooke
     circuit: ghz
   - name: stage1_grover
+    type: ideal
     backend: aer_simulator
     circuit: grover
     thresholds: {fidelity: 0.90}
   - name: stage2_grover
+    type: noisy
     backend: FakeManilaV2
     circuit: grover
     thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
   - name: stage3_grover
+    type: proxy
     backend: FakeSherbrooke
     circuit: grover
   - name: stage1_bv
+    type: ideal
     backend: aer_simulator
     circuit: bv
     thresholds: {fidelity: 0.90}
   - name: stage2_bv
+    type: noisy
     backend: FakeManilaV2
     circuit: bv
     thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
   - name: stage3_bv
+    type: proxy
     backend: FakeSherbrooke
     circuit: bv
   - name: stage1_qft
+    type: ideal
     backend: aer_simulator
     circuit: qft
     thresholds: {fidelity: 0.90}
   - name: stage2_qft
+    type: noisy
     backend: FakeManilaV2
     circuit: qft
     thresholds: {hellinger_fidelity: 0.90, tvd: 0.10}
   - name: stage3_qft
+    type: proxy
     backend: FakeSherbrooke
     circuit: qft

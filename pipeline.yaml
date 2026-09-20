@@ -2,12 +2,14 @@
 project: QPromote Thesis Evaluation
 db_path: qpromote_evidence.db
 shots: 4096
+seed: 20260920
 halt_on_block: false
 report_path: qpromote_report.html
 
 stages:
   # Bell state — Stage 1
   - name: stage1_bell
+    type: ideal
     backend: aer_simulator
     circuit: bell
     thresholds:
@@ -15,6 +17,7 @@ stages:
 
   # Bell state — Stage 2
   - name: stage2_bell
+    type: noisy
     backend: FakeManilaV2
     circuit: bell
     thresholds:
@@ -23,11 +26,13 @@ stages:
 
   # Bell state — Stage 3
   - name: stage3_bell
+    type: proxy
     backend: FakeSherbrooke
     circuit: bell
 
   # GHZ — Stage 1
   - name: stage1_ghz
+    type: ideal
     backend: aer_simulator
     circuit: ghz
     thresholds:
@@ -35,6 +40,7 @@ stages:
 
   # GHZ — Stage 2
   - name: stage2_ghz
+    type: noisy
     backend: FakeManilaV2
     circuit: ghz
     thresholds:
@@ -43,11 +49,13 @@ stages:
 
   # GHZ — Stage 3
   - name: stage3_ghz
+    type: proxy
     backend: FakeSherbrooke
     circuit: ghz
 
   # Grover — Stage 1
   - name: stage1_grover
+    type: ideal
     backend: aer_simulator
     circuit: grover
     thresholds:
@@ -55,6 +63,7 @@ stages:
 
   # Grover — Stage 2
   - name: stage2_grover
+    type: noisy
     backend: FakeManilaV2
     circuit: grover
     thresholds:
@@ -63,11 +72,13 @@ stages:
 
   # Grover — Stage 3
   - name: stage3_grover
+    type: proxy
     backend: FakeSherbrooke
     circuit: grover
 
   # BV — Stage 1
   - name: stage1_bv
+    type: ideal
     backend: aer_simulator
     circuit: bv
     thresholds:
@@ -75,6 +86,7 @@ stages:
 
   # BV — Stage 2
   - name: stage2_bv
+    type: noisy
     backend: FakeManilaV2
     circuit: bv
     thresholds:
@@ -83,11 +95,13 @@ stages:
 
   # BV — Stage 3
   - name: stage3_bv
+    type: proxy
     backend: FakeSherbrooke
     circuit: bv
 
   # QFT — Stage 1
   - name: stage1_qft
+    type: ideal
     backend: aer_simulator
     circuit: qft
     thresholds:
@@ -95,6 +109,7 @@ stages:
 
   # QFT — Stage 2
   - name: stage2_qft
+    type: noisy
     backend: FakeManilaV2
     circuit: qft
     thresholds:
@@ -103,5 +118,6 @@ stages:
 
   # QFT — Stage 3
   - name: stage3_qft
+    type: proxy
     backend: FakeSherbrooke
     circuit: qft
